@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 
 R_AIR = 287      # J/kg/K
 GRAV = 9.80665   # m/s^2
-GAMMA = 1.4      # the thermodynamic degree of freedom thing
+GAMMA = 1.4      # Ratio of specific heats for air
 
 PI = math.pi
 def SQRT(x): return np.sqrt(x)
 
 T_sealevel_isa = 288.15   # K
-T_tropopause_isa = 217    # K 
+T_tropopause_isa = 216.6  # K 
 
 p_sealevel_isa = 101325   # Pa
 p_tropopause_isa = 22600  # Pa
@@ -21,11 +21,11 @@ def isa(h_in_meters, T_offset=0):
 
     if h_in_meters < 11_000:
         l = -0.0065  # temperature lapse in K/m
-        T = T_sealevel_isa + T_offset + l * h_in_meters    
-        p = p_sealevel_isa * (T/T_sealevel_isa) ** (-GRAV/(l * R_AIR))
+        T = T_sealevel_isa + T_offset + l * h_in_meters
+        p = p_sealevel_isa * math.pow((T_sealevel_isa + l * h_in_meters)/T_sealevel_isa, -GRAV/(l * R_AIR))
     if h_in_meters >= 11_000 and h_in_meters < 20_000:
         T = T_tropopause_isa + T_offset
-        p = p_tropopause_isa * math.exp(-GRAV * (h_in_meters - 11_000) / (R_AIR * T))
+        p = p_tropopause_isa * math.exp(-GRAV * (h_in_meters - 11_000) / (R_AIR * T_tropopause_isa))
     
     rho = p / (R_AIR * T)
     
@@ -34,30 +34,32 @@ def isa(h_in_meters, T_offset=0):
 def speed_of_sound(T):
     return math.sqrt(GAMMA * R_AIR * T)
 
-# TODO: Test
-print("ISA 1600", isa(1600))
-
 #
 # CONSTANTS FOR THE PLANE
 #
 
-bypass_ratio = 12  # TODO placeholder value
-num_engines = 2    # TODO placeholder value
+bypass_ratio = 12  # From Class I weight estimation
+num_engines = 2    # 
 
-M_cruise = 0.82
-altitude_cr = 11887.2 # m, 39000 ft
+climb_rt_req = 12.7        # From REQ-OPER-0
+altitude_climb_rt_req = 0  # From REQ-OPER-0
+
+M_cruise = 0.82       #              From REQ-CRUISE-01
+altitude_cr = 11887.2 # m, 39000 ft, From REQ-CRUISE-01
+
+approach_speed = 80 # m/s   From REQ-LAND-05
 
 T_cruise, _, _ = isa(altitude_cr)
 V_cr = M_cruise * speed_of_sound(T_cruise)
 
-specific_energy = 44 # kerosene, MJ/kg  TODO placeholder value
+specific_energy = 43 # kerosene, MJ/kg   From Class I weight estimation
 
 jet_efficiency = V_cr / (22 * bypass_ratio**(-0.19)*10**(-6)) / (specific_energy*10**6)
 
-aspect_ratio = 9.4   # TODO placeholder value
+aspect_ratio = 9.4   # From Class I weight estimation
 
-c_f_equivalent = 0.00264 # estimated from Figure 6.3 in reader, TODO replace with analysis?
-S_wet_ratio    = 6       # estimated from Figure 6.3 in reader, TODO replace with analysis?
+c_f_equivalent = 0.0026    # From Class I weight estimation, estimated from Figure 6.3 in reader
+S_wet_ratio    = 6.0       # From Class I weight estimation, estimated from Figure 6.3 in reader
 
 c_d0_cruise = c_f_equivalent * S_wet_ratio # 6.15
 
@@ -65,8 +67,8 @@ oswald_phi = 0.97    # Figure 6.4
 oswald_psi = 0.0075  # Figure 6.4 
 oswald_eff_cruise = 1/(PI * aspect_ratio * oswald_psi + 1/oswald_phi) # 6.17
 
-flap_deflection_takeoff = 15    # in degrees  TODO placeholder value
-flap_deflection_landing = 35    # in degrees  TODO placeholder value
+flap_deflection_takeoff = 15    # in degrees  
+flap_deflection_landing = 35    # in degrees  
 
 def c_d0(gear_extended, flap_deflection):
     res = c_d0_cruise + 0.0013 * flap_deflection # 7.57
@@ -78,62 +80,88 @@ def oswald_eff(flap_deflection):
 
 max_LD = 1/2 * SQRT(PI * aspect_ratio * oswald_eff_cruise / c_d0_cruise)
 
-cl_max_cruise  = 1.3  # TODO: placeholder
-cl_max_takeoff = 1.7  # TODO: placeholder
-cl_max_landing = 1.9  # TODO: placeholder
-l_lf = 1856  # m 
-l_to = 2790  # m 
+cl_max_cruise  = 1.2  
+cl_max_takeoff = 1.6  
+cl_max_landing = 1.8  
 
-mass_fr_cr = 0.95           # TODO: placeholder
+l_to = 2790  # m, From REQ-APA-02
+l_lf = 1856  # m, From REQ-APA-03
+
+weight_takeoff = 200900.0 * GRAV  # From Class I weight estimation
+
+mass_fr_cr = 0.95           
 mass_fr_climb = mass_fr_cr
-mass_fr_landing = 0.79      # TODO: placeholder
+mass_fr_landing = 0.79      
 mass_fr_app = mass_fr_landing
 
-def cruise_speed(wing_load):
-    T_cr, p_cr, rho_cr  = isa(altitude_cr)
-    thr_lapse_cr = thrust_lapse(T_cr, 0.82, p_cr)
-
-    T_W = mass_fr_cr/thr_lapse_cr * (c_d0_cruise * 0.5 * rho_cr * V_cr ** 2)/(mass_fr_cr * wing_load)
-    + (mass_fr_cr * wing_load)/(PI * aspect_ratio * 0.5 * rho_cr * V_cr ** 2) # Equation 7.22
-    return T_W
-
-def min_speed(approach_speed):
+def min_speed():
     rho_app = p_sealevel_isa / (T_sealevel_isa * R_AIR)
     m_speed = (1/mass_fr_app) * (rho_app/2) * (approach_speed/1.23) ** 2 * cl_max_landing # Equation 7.6
     return m_speed
 
-def climb_rate(wing_load, altitude_climb, rho, climb_lift_coeff): # climb rate req. is a variable right now since we don't know the altitude requirement
-    # calculate climb_lift_coeff
-    T_climb, p_climb, rho_climb = isa(altitude_climb)
-    sound_speed_climb = speed_of_sound(T_climb)
-    climb_speed = SQRT(wing_load * (2 / rho) * (1 / climb_lift_coeff))
-    M_climb_rt = (climb_speed, T_climb)    
-    thr_lapse_climb = thr_lapse(T, M_climb_rt, p) # add Mach number
-    climb_rt_req = ... # TBD or calculate?
-    climb_rate_TW = (mass_fr_climb/thr_lapse) * (SQRT((climb_rt_req ** 2/(mass_fr_climb * wing_load))
-    * (rho / 2) * SQRT(c_d0_cruise * PI * aspect_ratio * oswald_eff_cruise)) + 2
+def landing_field(h_landing):
+    cl_lf=0.45 # For jet aircraft
+
+    _, _, rho_l  = isa(h_landing, T_offset=15)
+
+    W_S = (1/mass_fr_landing) * (l_lf/cl_lf) * ((rho_l * cl_max_landing)/2) # Equation 7.15
+    return W_S       
+
+def cruise_speed(wing_load):
+    T_cr, p_cr, rho_cr  = isa(altitude_cr)
+    thr_lapse_cr = thrust_lapse(T_cr, M_cruise, p_cr)
+
+    T_W = mass_fr_cr/thr_lapse_cr * (c_d0_cruise * 0.5 * rho_cr * V_cr ** 2)/(mass_fr_cr * wing_load)
+    + (mass_fr_cr * wing_load)/(PI * aspect_ratio * oswald_eff_cruise * 0.5 * rho_cr * V_cr ** 2) # Equation 7.22
+    return T_W
+
+def climb_rate(wing_load):
+    climb_lift_coeff = SQRT(c_d0_cruise * PI * oswald_eff_cruise * aspect_ratio)
+    
+    T_climb, p_climb, rho_climb = isa(altitude_climb_rt_req, T_offset=15)
+
+    climb_speed = SQRT(wing_load * (2 / rho_climb) * (1 / climb_lift_coeff))
+    M_climb_rt = climb_speed / speed_of_sound(T_climb)    
+
+    climb_rate_TW = (mass_fr_climb/np.vectorize(thrust_lapse)(T_climb, M_climb_rt, p_climb)) * (SQRT((climb_rt_req ** 2/(mass_fr_climb * wing_load))
+    * (rho_climb / 2) * SQRT(c_d0_cruise * PI * aspect_ratio * oswald_eff_cruise)) + 2
     * SQRT(c_d0_cruise/(PI * aspect_ratio * oswald_eff_cruise))) # Equation 7.43
 
     return climb_rate_TW
 
-def climb_gradient(thr_lapse, mass_fr, zero_lift_drag_coeff, oswald_factor, climb_grad):
-    # calculate thr lapse 
+def climb_gradient(wing_load, altitude_climb_rate, zero_lift_drag_coeff, oswald_factor, climb_grad_percent, oei_condition):
+    climb_lift_coeff = SQRT(zero_lift_drag_coeff * PI * oswald_factor * aspect_ratio)
     
-    climb_grad_TW = (mass_fr/thr_lapse) * (climb_grad/100 + 2 * SQRT(zero_lift_drag_coeff/(PI * oswald_factor * aspect_ratio)))
+    T_climb, p_climb, rho_climb = isa(altitude_climb_rate)
+    
+    climb_speed = SQRT(wing_load * (2 / rho_climb) * (1 / climb_lift_coeff))
+    M_climb_rt = climb_speed / speed_of_sound(T_climb)    
+    
+    if oei_condition:
+        oei_factor = num_engines / (num_engines - 1)
+    else:
+        oei_factor = 1
+
+    climb_grad_TW = oei_factor * (mass_fr_climb/np.vectorize(thrust_lapse)(T_climb, M_climb_rt, p_climb)) * (climb_grad_percent/100 + 2 * SQRT(zero_lift_drag_coeff/(PI * oswald_factor * aspect_ratio)))
     return climb_grad_TW
 
-        
-def landing_field(rho_lf, cl_lf):
-    W_S = (1/mass_fr_landing) * (l_lf/cl_lf) * ((rho_lf * cl_max_landing)/2) # Equation 7.15
-    return W_S       
+def takeoff_field(wing_load, h_takeoff, oei_condition):
+    h2 = 11 # m, this is for CS-25 planes
 
-def takeoff_field(wing_load, altitude, h2):
-    T, p, rho = isa(altitude)
+    T, p, rho = isa(h_takeoff, T_offset=15)
+    cl_2 =(1/1.13)**2 * cl_max_takeoff
 
-    cl =(1/1.13)**2 * cl_max_takeoff
-    M = SQRT(wing_load * 2/rho * 1/cl)/ speed_of_sound(T)
+    v2 = SQRT(wing_load * (2 / rho) * (1 / cl_2))
+    M = v2 / speed_of_sound(T)
 
-    takeoff_field_TW = 1.15 * thrust_lapse(T, M, p)[0] * SQRT((wing_load)/(l_to* 0.85 * rho *GRAV* math.pi * aspect_ratio * oswald_eff(flap_deflection_takeoff)))+((4*h2)/(l_to)) # Equation 7.67 
+    if oei_condition:
+        oei_factor = num_engines / (num_engines - 1)
+    else:
+        oei_factor = 1
+
+    k_t = 0.85 # Assumed for jet airplanes
+
+    takeoff_field_TW = 1.15 * np.vectorize(thrust_lapse)(T, M, p) * SQRT((oei_factor * wing_load)/(l_to * k_t * rho *GRAV* math.pi * aspect_ratio * oswald_eff(flap_deflection_takeoff))) + oei_factor * ((4*h2)/(l_to)) # Equation 7.67 
     return takeoff_field_TW   
 
 
@@ -150,56 +178,108 @@ def thrust_lapse(T, M, p): # 7.29 - 7.32
     delta_t = total_pressure(M, p) / p_sealevel_isa
     theta_t = total_temperature(M, T) / T_sealevel_isa
     
-    if np.isscalar(theta_t):
-        theta_t = np.array([theta_t])  # Convert scalar to 1-element array for processing
-
     theta_t_break = 1.07   # According to Ref. [4], modern engines have values of θt break ranging between 1.06 and 1.08.
 
     assert(bypass_ratio > 0 and bypass_ratio < 15)
-
-    result = np.zeros_like(theta_t)
     if bypass_ratio < 5:
-        mask = theta_t <= theta_t_break
-        if mask.any():
-            result[mask] = delta_t
-        if (~mask).any():
-            result[~mask] = delta_t * (1 - 2.1 * (theta_t[~mask] - theta_t_break) / theta_t[~mask])
+        if  theta_t <= theta_t_break:
+            return delta_t
+        else:
+            return delta_t * (1 - 2.1 * (theta_t - theta_t_break) / theta_t)
     elif bypass_ratio >= 5 and bypass_ratio < 15:
-        mask = theta_t <= theta_t_break
-        if mask.any():
-            result[mask] = delta_t * (1 - (0.43 + 0.014 * bypass_ratio) * np.sqrt(M))
-        if (~mask).any():
-            result[~mask] = delta_t * (1 - (0.43 + 0.014 * bypass_ratio) * np.sqrt(M) - (3 * (theta_t[~mask] - theta_t_break)) / (M + 1.5))
-    return result
 
-W_S = np.arange(0, 9000, step=1000)
-W_S_min_speed = min_speed(approach_speed=78) # TODO approach speed is placeholder, should be TLAR
+        if theta_t <= theta_t_break:
+            return delta_t * (1 - (0.43 + 0.014 * bypass_ratio) * np.sqrt(M))
+        else:
+            return delta_t * (1 - (0.43 + 0.014 * bypass_ratio) * np.sqrt(M) - (3 * (theta_t - theta_t_break)) / (M + 1.5))
 
-_, _, landing_field_rho = isa(h_in_meters=0) # TODO assuming airport is at 0 altitude
-W_S_landing_field_length = landing_field(landing_field_rho, cl_lf=0.45) # Example 7.4 shows using cl_lf=0.45 for jet aircraft
+def calculate_takeoff_field_length_from_design_point(h_takeoff, oei_condition, wing_area, thrust_takeoff):
+    h2 = 11 # m, this is for CS-25 planes
 
-W_S_cruise_speed = cruise_speed(W_S)
-# W_S_climb_rate = climb_rate(W_S, altitude_climb=7400, thr_lapse=1) # TODO placeholder altitude climb
+    T, p, rho = isa(h_takeoff, T_offset=15)
+
+    cl_2 =(1/1.13)**2 * cl_max_takeoff
+
+    print("cl_2", cl_2)
+    Tv2 = thrust_takeoff * thrust_lapse(T, approach_speed / speed_of_sound(T), p)
+    print("Tv2", Tv2)
+
+    if oei_condition:
+        oei_factor = (num_engines - 1) / num_engines
+    else:
+        oei_factor = 1
+
+    print("oei_factor", oei_factor)
+
+    c_d0_to = c_d0(gear_extended=True, flap_deflection=flap_deflection_takeoff)
+    e_to = oswald_eff(flap_deflection_takeoff)
+
+    print("oei_factor", oei_factor)
+
+    k_t = 0.85 # Assumed for jet airplanes
+    return weight_takeoff**2 / (rho * GRAV * wing_area * cl_2 * k_t * Tv2) + 2 * h2 * (oei_factor * Tv2 / weight_takeoff - (c_d0_to / cl_2 + cl_2 / (PI * aspect_ratio * e_to)))
 
 
-W_S_takeoff_field = takeoff_field(W_S, altitude=500, h2=11) # TODO placeholder altitude and h2
 
-plt.vlines([W_S_min_speed, W_S_landing_field_length])
-plt.plot(W_S, W_S_cruise_speed)
-plt.plot(W_S, W_S_takeoff_field)
-plt.title("Matching diagram")
-plt.xlabel("W/S [N/m^2]")
-plt.ylabel("T/W [N/N]")
-plt.show()
+#Wing Planform formulas
 
-#
-# Climb rate requirements (from ADSE)
-#                            25,119	25.121(a)	25.121(b)	25.121(c)	25.121(d)
-# Altitude		               	  0	        0	        0	        0	        0
-# No. of operating engines		  2	        1	        1	        1	        1
-# Mass fraction			          1	        1	        1	        1	     0,79
-# Temperature Difference		  0	        0	        0	        0	        0
-# Temperature			     288,15	   288,15	    288,15	    288,15	   288,15
+def wing_area(WingSpan, ChordLengthAtTip, ChordLengthAtRoot):
+    S = WingSpan(ChordLengthAtTip + ChordLengthAtRoot)/2
+    return S
 
-speed_of_sound_climb = speed_of_sound(288.15)
-# W_S_climb_gradient = climb_gradient(...)
+def calculate_aspect_ratio(WingSpan, WingArea):
+    AR = WingSpan^2/WingArea
+    return AR
+
+def calculate_taper_ratio(ChordLengthAtTip, ChordLengthAtRoot):
+    TR = ChordLengthAtTip / ChordLengthAtRoot
+    return TR
+
+def angle_of_quarter_chord_line(MachAtCruise):
+    Angle = math.acos(1.16/(MachAtCruise+0.5))
+    return Angle
+
+def angle_of_leading_edge(angle_of_quarter_chord_line, ChordLengthAtRoot, WingSpan, TaperRatio):
+    Angle = math.tan(angle_of_quarter_chord_line) - ChordLengthAtRoot*(TaperRatio-1)/(2*WingSpan)
+
+def wing_span(aspect_ratio, S):
+    b = math.sqrt(aspect_ratio*360)
+    return b 
+
+#must be less than 80m
+
+
+def taper_ratio(angle_of_quarter_chord_line):
+    taper_ratio = -0.0083 * angle_of_quarter_chord_line + 0.4597
+    return taper_ratio
+
+def root_chord(taper_ratio, S, b):
+    root_chord = (2*360)/((1+taper_ratio)*wing_span)
+    return root_chord
+
+def tip_chord(taper_ratio, root_chord):
+    tip_chord = taper_ratio * root_chord
+    return tip_chord
+
+def mean_geometric_chord(root_chord, taper_ratio):
+    MGC = (2/3)*root_chord*((1 + taper_ratio + (taper_ratio)^2)/( 1 + taper_ratio))
+    return MGC
+
+def YLEMGC(b, taper_ratio):
+    YLEMGC = (wing_span/6) * ( 1 + 2*taper_ratio)/(1 + taper_ratio)
+    return YLEMGC
+
+def XLEMGC(YLEMGC, AngleOfLeadingEdge):
+    XLEMGC = YLEMGC * math.tan(AngleOfLeadingEdge)
+    return XLEMGC
+
+
+def chordlength(LengthFromRoot, ChordLengthAtRoot, ChordLengthAtTip, WingSpan): 
+
+    Percentage = LengthFromRoot/WingSpan
+    
+    Length = ChordLengthAtRoot -  Percentage*(ChordLengthAtRoot - ChordLengthAtTip)
+    return Length
+
+def mean_aerodynamic_chord(ChordLength, WingArea):
+    pass
